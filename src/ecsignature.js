@@ -3,7 +3,7 @@ var typeForce = require('typeforce')
 
 var BigInteger = require('bigi')
 
-function ECSignature(r, s) {
+function ECSignature (r, s) {
   typeForce('BigInteger', r)
   typeForce('BigInteger', s)
 
@@ -11,8 +11,7 @@ function ECSignature(r, s) {
   this.s = s
 }
 
-// Import operations
-ECSignature.parseCompact = function(buffer) {
+ECSignature.parseCompact = function (buffer) {
   assert.equal(buffer.length, 65, 'Invalid signature length')
   var i = buffer.readUInt8(0) - 27
 
@@ -33,7 +32,7 @@ ECSignature.parseCompact = function(buffer) {
   }
 }
 
-ECSignature.fromDER = function(buffer) {
+ECSignature.fromDER = function (buffer) {
   assert.equal(buffer.readUInt8(0), 0x30, 'Not a DER sequence')
   assert.equal(buffer.readUInt8(1), buffer.length - 2, 'Invalid sequence length')
   assert.equal(buffer.readUInt8(2), 0x02, 'Expected a DER integer')
@@ -69,12 +68,12 @@ ECSignature.fromDER = function(buffer) {
   return new ECSignature(r, s)
 }
 
-// FIXME: 0x00, 0x04, 0x80 are SIGHASH_* boundary constants, importing Transaction causes a circular dependency
-ECSignature.parseScriptSignature = function(buffer) {
+// BIP62: 1 byte hashType flag (only 0x01, 0x02, 0x03, 0x81, 0x82 and 0x83 are allowed)
+ECSignature.parseScriptSignature = function (buffer) {
   var hashType = buffer.readUInt8(buffer.length - 1)
   var hashTypeMod = hashType & ~0x80
 
-  assert(hashTypeMod > 0x00 && hashTypeMod < 0x04, 'Invalid hashType')
+  assert(hashTypeMod > 0x00 && hashTypeMod < 0x04, 'Invalid hashType ' + hashType)
 
   return {
     signature: ECSignature.fromDER(buffer.slice(0, -1)),
@@ -82,9 +81,11 @@ ECSignature.parseScriptSignature = function(buffer) {
   }
 }
 
-// Export operations
-ECSignature.prototype.toCompact = function(i, compressed) {
-  if (compressed) i += 4
+ECSignature.prototype.toCompact = function (i, compressed) {
+  if (compressed) {
+    i += 4
+  }
+
   i += 27
 
   var buffer = new Buffer(65)
@@ -96,7 +97,7 @@ ECSignature.prototype.toCompact = function(i, compressed) {
   return buffer
 }
 
-ECSignature.prototype.toDER = function() {
+ECSignature.prototype.toDER = function () {
   var rBa = this.r.toDERInteger()
   var sBa = this.s.toDERInteger()
 
@@ -116,7 +117,10 @@ ECSignature.prototype.toDER = function() {
   return new Buffer(sequence)
 }
 
-ECSignature.prototype.toScriptSignature = function(hashType) {
+ECSignature.prototype.toScriptSignature = function (hashType) {
+  var hashTypeMod = hashType & ~0x80
+  assert(hashTypeMod > 0x00 && hashTypeMod < 0x04, 'Invalid hashType ' + hashType)
+
   var hashTypeBuffer = new Buffer(1)
   hashTypeBuffer.writeUInt8(hashType, 0)
 

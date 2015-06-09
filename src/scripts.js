@@ -1,6 +1,6 @@
 var assert = require('assert')
-var typeForce = require('typeforce')
 var ops = require('./opcodes')
+var typeForce = require('typeforce')
 
 var ecurve = require('ecurve')
 var curve = ecurve.getCurveByName('secp256k1')
@@ -8,13 +8,15 @@ var curve = ecurve.getCurveByName('secp256k1')
 var ECSignature = require('./ecsignature')
 var Script = require('./script')
 
-function isCanonicalPubKey(buffer) {
+function isCanonicalPubKey (buffer) {
   if (!Buffer.isBuffer(buffer)) return false
 
   try {
     ecurve.Point.decodeFrom(curve, buffer)
   } catch (e) {
-    if (!(e.message.match(/Invalid sequence (length|tag)/))) throw e
+    if (!(e.message.match(/Invalid sequence (length|tag)/))) {
+      throw e
+    }
 
     return false
   }
@@ -22,13 +24,15 @@ function isCanonicalPubKey(buffer) {
   return true
 }
 
-function isCanonicalSignature(buffer) {
+function isCanonicalSignature (buffer) {
   if (!Buffer.isBuffer(buffer)) return false
 
   try {
     ECSignature.parseScriptSignature(buffer)
-  } catch(e) {
-    if (!(e.message.match(/Not a DER sequence|Invalid sequence length|Expected a DER integer|R length is zero|S length is zero|R value excessively padded|S value excessively padded|R value is negative|S value is negative|Invalid hashType/))) throw e
+  } catch (e) {
+    if (!(e.message.match(/Not a DER sequence|Invalid sequence length|Expected a DER integer|R length is zero|S length is zero|R value excessively padded|S value excessively padded|R value is negative|S value is negative|Invalid hashType/))) {
+      throw e
+    }
 
     return false
   }
@@ -36,13 +40,13 @@ function isCanonicalSignature(buffer) {
   return true
 }
 
-function isPubKeyHashInput(script) {
+function isPubKeyHashInput (script) {
   return script.chunks.length === 2 &&
     isCanonicalSignature(script.chunks[0]) &&
     isCanonicalPubKey(script.chunks[1])
 }
 
-function isPubKeyHashOutput(script) {
+function isPubKeyHashOutput (script) {
   return script.chunks.length === 5 &&
     script.chunks[0] === ops.OP_DUP &&
     script.chunks[1] === ops.OP_HASH160 &&
@@ -52,30 +56,33 @@ function isPubKeyHashOutput(script) {
     script.chunks[4] === ops.OP_CHECKSIG
 }
 
-function isPubKeyInput(script) {
+function isPubKeyInput (script) {
   return script.chunks.length === 1 &&
     isCanonicalSignature(script.chunks[0])
 }
 
-function isPubKeyOutput(script) {
+function isPubKeyOutput (script) {
   return script.chunks.length === 2 &&
     isCanonicalPubKey(script.chunks[0]) &&
     script.chunks[1] === ops.OP_CHECKSIG
 }
 
-function isScriptHashInput(script) {
+function isScriptHashInput (script, allowIncomplete) {
   if (script.chunks.length < 2) return false
-  var lastChunk = script.chunks[script.chunks.length - 1]
 
+  var lastChunk = script.chunks[script.chunks.length - 1]
   if (!Buffer.isBuffer(lastChunk)) return false
 
   var scriptSig = Script.fromChunks(script.chunks.slice(0, -1))
-  var scriptPubKey = Script.fromBuffer(lastChunk)
+  var redeemScript = Script.fromBuffer(lastChunk)
 
-  return classifyInput(scriptSig) === classifyOutput(scriptPubKey)
+  // is redeemScript a valid script?
+  if (redeemScript.chunks.length === 0) return false
+
+  return classifyInput(scriptSig, allowIncomplete) === classifyOutput(redeemScript)
 }
 
-function isScriptHashOutput(script) {
+function isScriptHashOutput (script) {
   return script.chunks.length === 3 &&
     script.chunks[0] === ops.OP_HASH160 &&
     Buffer.isBuffer(script.chunks[1]) &&
@@ -83,12 +90,22 @@ function isScriptHashOutput(script) {
     script.chunks[2] === ops.OP_EQUAL
 }
 
-function isMultisigInput(script) {
-  return script.chunks[0] === ops.OP_0 &&
-    script.chunks.slice(1).every(isCanonicalSignature)
+// allowIncomplete is to account for combining signatures
+// See https://github.com/bitcoin/bitcoin/blob/f425050546644a36b0b8e0eb2f6934a3e0f6f80f/src/script/sign.cpp#L195-L197
+function isMultisigInput (script, allowIncomplete) {
+  if (script.chunks.length < 2) return false
+  if (script.chunks[0] !== ops.OP_0) return false
+
+  if (allowIncomplete) {
+    return script.chunks.slice(1).every(function (chunk) {
+      return chunk === ops.OP_0 || isCanonicalSignature(chunk)
+    })
+  }
+
+  return script.chunks.slice(1).every(isCanonicalSignature)
 }
 
-function isMultisigOutput(script) {
+function isMultisigOutput (script) {
   if (script.chunks.length < 4) return false
   if (script.chunks[script.chunks.length - 1] !== ops.OP_CHECKMULTISIG) return false
 
@@ -112,11 +129,11 @@ function isMultisigOutput(script) {
   return pubKeys.every(isCanonicalPubKey)
 }
 
-function isNullDataOutput(script) {
+function isNullDataOutput (script) {
   return script.chunks[0] === ops.OP_RETURN
 }
 
-function classifyOutput(script) {
+function classifyOutput (script) {
   typeForce('Script', script)
 
   if (isPubKeyHashOutput(script)) {
@@ -134,15 +151,15 @@ function classifyOutput(script) {
   return 'nonstandard'
 }
 
-function classifyInput(script) {
+function classifyInput (script, allowIncomplete) {
   typeForce('Script', script)
 
   if (isPubKeyHashInput(script)) {
     return 'pubkeyhash'
-  } else if (isScriptHashInput(script)) {
-    return 'scripthash'
-  } else if (isMultisigInput(script)) {
+  } else if (isMultisigInput(script, allowIncomplete)) {
     return 'multisig'
+  } else if (isScriptHashInput(script, allowIncomplete)) {
+    return 'scripthash'
   } else if (isPubKeyInput(script)) {
     return 'pubkey'
   }
@@ -152,15 +169,15 @@ function classifyInput(script) {
 
 // Standard Script Templates
 // {pubKey} OP_CHECKSIG
-function pubKeyOutput(pubKey) {
+function pubKeyOutput (pubKey) {
   return Script.fromChunks([
-    pubKey.toBuffer(),
+    pubKey,
     ops.OP_CHECKSIG
   ])
 }
 
 // OP_DUP OP_HASH160 {pubKeyHash} OP_EQUALVERIFY OP_CHECKSIG
-function pubKeyHashOutput(hash) {
+function pubKeyHashOutput (hash) {
   typeForce('Buffer', hash)
 
   return Script.fromChunks([
@@ -173,7 +190,7 @@ function pubKeyHashOutput(hash) {
 }
 
 // OP_HASH160 {scriptHash} OP_EQUAL
-function scriptHashOutput(hash) {
+function scriptHashOutput (hash) {
   typeForce('Buffer', hash)
 
   return Script.fromChunks([
@@ -184,40 +201,37 @@ function scriptHashOutput(hash) {
 }
 
 // m [pubKeys ...] n OP_CHECKMULTISIG
-function multisigOutput(m, pubKeys) {
-  typeForce(['ECPubKey'], pubKeys)
+function multisigOutput (m, pubKeys) {
+  typeForce(['Buffer'], pubKeys)
 
-  assert(pubKeys.length >= m, 'Not enough pubKeys provided')
-
-  var pubKeyBuffers = pubKeys.map(function(pubKey) {
-    return pubKey.toBuffer()
-  })
   var n = pubKeys.length
+  assert(n >= m, 'Not enough pubKeys provided')
 
   return Script.fromChunks([].concat(
     (ops.OP_1 - 1) + m,
-    pubKeyBuffers,
+    pubKeys,
     (ops.OP_1 - 1) + n,
     ops.OP_CHECKMULTISIG
   ))
 }
 
 // {signature}
-function pubKeyInput(signature) {
+function pubKeyInput (signature) {
   typeForce('Buffer', signature)
 
   return Script.fromChunks([signature])
 }
 
 // {signature} {pubKey}
-function pubKeyHashInput(signature, pubKey) {
+function pubKeyHashInput (signature, pubKey) {
   typeForce('Buffer', signature)
+  typeForce('Buffer', pubKey)
 
-  return Script.fromChunks([signature, pubKey.toBuffer()])
+  return Script.fromChunks([signature, pubKey])
 }
 
 // <scriptSig> {serialized scriptPubKey script}
-function scriptHashInput(scriptSig, scriptPubKey) {
+function scriptHashInput (scriptSig, scriptPubKey) {
   return Script.fromChunks([].concat(
     scriptSig.chunks,
     scriptPubKey.toBuffer()
@@ -225,7 +239,7 @@ function scriptHashInput(scriptSig, scriptPubKey) {
 }
 
 // OP_0 [signatures ...]
-function multisigInput(signatures, scriptPubKey) {
+function multisigInput (signatures, scriptPubKey) {
   if (scriptPubKey) {
     assert(isMultisigOutput(scriptPubKey))
 
@@ -241,7 +255,7 @@ function multisigInput(signatures, scriptPubKey) {
   return Script.fromChunks([].concat(ops.OP_0, signatures))
 }
 
-function nullDataOutput(data) {
+function nullDataOutput (data) {
   return Script.fromChunks([ops.OP_RETURN, data])
 }
 
@@ -267,9 +281,5 @@ module.exports = {
   pubKeyHashInput: pubKeyHashInput,
   scriptHashInput: scriptHashInput,
   multisigInput: multisigInput,
-  dataOutput: function(data) {
-    console.warn('dataOutput is deprecated, use nullDataOutput by 2.0.0')
-    return nullDataOutput(data)
-  },
   nullDataOutput: nullDataOutput
 }
